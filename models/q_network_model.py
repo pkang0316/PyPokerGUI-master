@@ -21,6 +21,17 @@ class QNetworkModel:
         self.model_name = 'q_network_model'
         self.version = "1.0"
         
+        # Initialize performance tracking
+        self.training_history = {
+            'timestamp': [],       # When the data point was recorded
+            'episode': [],         # Training episode number
+            'loss': [],           # Training loss
+            'action_taken': [],    # What action was chosen
+            'reward': [],         # Reward received
+            'state_info': [],     # Key state information (e.g., hand type, position)
+            'q_values': []        # Model's Q-value predictions
+        }
+        
         # Load configuration and set up directories
         self.config = self._load_config()
         self.directories = self._setup_directories()
@@ -193,17 +204,14 @@ class QNetworkModel:
         """
         Convert a card string (e.g., 'Ah') to its index in the one-hot encoding.
         
-        The indexing system uses a specific pattern where:
-        - Base numbers start at 3 for '2'
-        - Ten is represented by 'T' and gets a specific index
-        - Face cards and Aces get high indices
-        - Suits modify the base indices
-        
-        Test cases:
-        - '2c' -> 3  (Two of Clubs)
-        - 'Ts' -> 34 (Ten of Spades)
-        - 'Kd' -> 47 (King of Diamonds)
-        - 'Ah' -> 48 (Ace of Hearts)
+        The indexing system follows these rules:
+        - Number cards 2-9: base index is card value + 1
+        - Face cards have specific indices:
+          T(10) -> 10 (or 34 for Ts)
+          J -> 11
+          Q -> 12
+          K -> 13 (or 47 for Kd)
+          A -> 14 (or 48 for Ah)
         
         Args:
             card (str): Two-character string representing a card (e.g., 'Ah')
@@ -214,18 +222,21 @@ class QNetworkModel:
         rank = card[0]
         suit = card[1]
         
-        # Base index for each rank
-        if rank == '2':
-            base = 3
-        elif rank == 'T':
-            base = 34 if suit == 's' else 10  # Special case for Ten of Spades
+        # Handle special cases first
+        if rank == 'T':
+            base = 34 if suit == 's' else 10
+        elif rank == 'J':
+            base = 11
+        elif rank == 'Q':
+            base = 12
         elif rank == 'K':
-            base = 47 if suit == 'd' else 13  # Special case for King of Diamonds
+            base = 47 if suit == 'd' else 13
         elif rank == 'A':
-            base = 48 if suit == 'h' else 14  # Special case for Ace of Hearts
-        else:
-            # For other numbered cards (3-9)
+            base = 48 if suit == 'h' else 14
+        elif rank >= '2' and rank <= '9':
             base = int(rank) + 1
+        else:
+            raise ValueError(f"Invalid card rank: {rank}")
         
         return base
 
@@ -242,29 +253,95 @@ class QNetworkModel:
         processed_state = self.preprocess_state(state)
         return self.model.predict(processed_state)
 
-    def update_weights(self, state, target_q_values):
+    def update_weights(self, state, target_q_values, episode=None, action_taken=None, reward=None):
         """
-        Update the network weights using backpropagation.
+        Update the network weights using backpropagation and track performance metrics.
         
         Args:
             state (dict): Current poker state
             target_q_values (numpy.ndarray): Target Q-values for training
+            episode (int, optional): Current training episode number
+            action_taken (int, optional): Action that was taken in this state
+            reward (float, optional): Reward received for the action
             
         Returns:
             History: Training history object
         """
         processed_state = self.preprocess_state(state)
-        return self.model.fit(processed_state, target_q_values, verbose=0)
+        history = self.model.fit(processed_state, target_q_values, verbose=0)
+        
+        # Get current predictions for comparison
+        current_q_values = self.model.predict(processed_state)
+        
+        # Record performance metrics with consistent types
+        from datetime import datetime
+        import json
+        
+        self.training_history['timestamp'].append(datetime.now().isoformat())
+        self.training_history['episode'].append(int(episode if episode is not None else len(self.training_history['episode'])))
+        self.training_history['loss'].append(float(history.history['loss'][0]))
+        self.training_history['action_taken'].append(int(action_taken if action_taken is not None else -1))
+        self.training_history['reward'].append(float(reward if reward is not None else 0.0))
+        
+        # Record relevant state information
+        state_info = {
+            'hand': '_'.join(state['hole_cards']),
+            'position': state['position'],
+            'equity': state['equity'],
+            'pot': state['stack'] / state['pot'] if state['pot'] > 0 else 0  # pot odds
+        }
+        self.training_history['state_info'].append(json.dumps(state_info))
+        
+        # Record Q-value predictions
+        self.training_history['q_values'].append(current_q_values.tolist())
+        
+        return history
+
+    def save_performance_history(self, filename=None):
+        """
+        Save the model's performance history to a CSV file.
+        
+        Args:
+            filename (str, optional): Name for the CSV file. If not provided,
+                                    uses model_name and timestamp.
+        
+        Returns:
+            Path: Path to the saved CSV file
+        """
+        import pandas as pd
+        from datetime import datetime
+        
+        # Create DataFrame from history
+        df = pd.DataFrame({
+            'timestamp': self.training_history['timestamp'],
+            'episode': self.training_history['episode'],
+            'loss': self.training_history['loss'],
+            'action_taken': self.training_history['action_taken'],
+            'reward': self.training_history['reward'],
+            'state_info': self.training_history['state_info'],
+            'q_values': [str(q) for q in self.training_history['q_values']]
+        })
+        
+        # Generate filename if not provided
+        if filename is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{self.model_name}_history_{timestamp}.csv"
+            
+        # Save to CSV in the model's directory
+        save_path = self.directories['saved_models'] / self.model_name / filename
+        df.to_csv(save_path, index=False)
+        
+        return save_path
 
     def save_model(self, filename):
         """
-        Save the model architecture and weights.
+        Save the model architecture, weights, and performance history.
         
         Args:
             filename (str): Base name for the saved model files
             
         Returns:
-            tuple: Paths to saved model and weights files
+            tuple: Paths to saved model, weights files, and performance history
         """
         save_dir = self.directories['saved_models'] / self.model_name
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -275,7 +352,9 @@ class QNetworkModel:
         try:
             self.model.save(str(model_path))
             self.model.save_weights(str(weights_path))
-            return model_path, weights_path
+            # Save performance history alongside model
+            history_path = self.save_performance_history(f"{filename}_history.csv")
+            return model_path, weights_path, history_path
             
         except Exception as e:
             raise RuntimeError(f"Error saving model: {str(e)}")
