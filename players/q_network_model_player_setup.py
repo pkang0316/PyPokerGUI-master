@@ -3,7 +3,7 @@ import time
 import glob
 import numpy as np
 from pypokerengine.players import BasePokerPlayer
-from players.neural_network.q_network.q_network_model import QNetworkModel
+from models.q_network_model import QNetworkModel
 
 class QLearningPokerPlayer(BasePokerPlayer):
     def __init__(self, player_name):
@@ -167,7 +167,7 @@ class QLearningPokerPlayer(BasePokerPlayer):
         self.last_action = None
         self.last_reward = reward
 
-    def get_reward(self, winners, hand_info):
+    def get_reward(self, winners, hand_info):  
         # Reward function can be defined based on whether the player won or lost
         if self.is_winner(winners, hand_info):
             return 1  # Positive reward for winning

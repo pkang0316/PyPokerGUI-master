@@ -1,0 +1,13 @@
+{
+    "directories": {
+        "base_models": "models",
+        "model": {
+            "saved_models": "models/saved",
+            "q_network": {
+                "base": "models/q_network",
+                "weights": "models/q_network/weights",
+                "checkpoints": "models/q_network/checkpoints"
+            }
+        }
+    }
+}
