@@ -81,7 +81,10 @@ class GameManager(object):
         Save the models for each AI player.
         """
         for ai_uuid, ai_player in self.ai_players.items():
-            ai_player.save_model()  # Assuming `save_model()` method exists for AI players
+            try:
+                ai_player.model.save_model()  # Assuming `save_model()` method exists for AI players
+            except:
+                print(f"Failed to save model for player [ {ai_uuid} ]")
 
     def reinitialize_game(self):
         """

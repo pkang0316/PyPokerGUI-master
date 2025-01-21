@@ -3,6 +3,8 @@ import tensorflow as tf
 from tensorflow import keras
 from pathlib import Path
 import json
+import warnings
+from datetime import datetime
 
 class QNetworkModel:
     def __init__(self, action_size):
@@ -25,11 +27,11 @@ class QNetworkModel:
         self.training_history = {
             'timestamp': [],       # When the data point was recorded
             'episode': [],         # Training episode number
-            'loss': [],           # Training loss
+            'loss': [],            # Training loss
             'action_taken': [],    # What action was chosen
-            'reward': [],         # Reward received
-            'state_info': [],     # Key state information (e.g., hand type, position)
-            'q_values': []        # Model's Q-value predictions
+            'reward': [],          # Reward received
+            'state_info': [],      # Key state information (e.g., hand type, position)
+            'q_values': []         # Model's Q-value predictions
         }
         
         # Load configuration and set up directories
@@ -157,125 +159,94 @@ class QNetworkModel:
         )
         
         return model
-
-    def preprocess_state(self, state):
-        """
-        Convert a poker state dictionary into the neural network's input format.
+    
+    def _index_to_card(self, index):
+        """Maps index in 52-card deck back to card string."""
+        suit_map = {0: 'S', 13: 'H', 26: 'D', 39: 'C'}
+        suit = suit_map[index - (index % 13)]
         
-        Args:
-            state (dict): Dictionary containing hole_cards, community_cards,
-                         and numeric features
-        
-        Returns:
-            tuple: Three numpy arrays for hole cards, community cards,
-                  and numeric features
-        """
-        # Initialize one-hot encodings for cards
-        hole_cards = np.zeros(self.hole_cards_dim)
-        community_cards = np.zeros(self.community_cards_dim)
-        
-        # Convert hole cards to one-hot encoding
-        for card in state['hole_cards']:
-            idx = self._card_to_index(card)
-            hole_cards[idx] = 1
+        rank_idx = index % 13
+        if rank_idx >= 0 and rank_idx <= 7:
+            rank = str(rank_idx + 2)
+        elif rank_idx == 8:
+            rank = 'T'
+        elif rank_idx == 9:
+            rank = 'J'
+        elif rank_idx == 10:
+            rank = 'Q'
+        elif rank_idx == 11:
+            rank = 'K'
+        else:  # rank_idx == 12
+            rank = 'A'
             
-        # Convert community cards to one-hot encoding
-        for card in state['community_cards']:
-            idx = self._card_to_index(card)
-            community_cards[idx] = 1
-            
-        # Create numeric features array
-        numeric_features = np.array([
-            state['pot'],
-            state['stack'],
-            state['position'],
-            state['opponent_stack'],
-            state['equity']
-        ])
-        
-        # Reshape for batch processing
-        return [
-            hole_cards.reshape(1, -1),
-            community_cards.reshape(1, -1),
-            numeric_features.reshape(1, -1)
-        ]
+        return suit + rank
 
     def _card_to_index(self, card):
-        """
-        Convert a card string (e.g., 'Ah') to its index in the one-hot encoding.
+        """Maps card to index in 52-card deck one-hot encoding."""
+        suit = card[0].lower()
+        rank = card[1]
         
-        The indexing system follows these rules:
-        - Number cards 2-9: base index is card value + 1
-        - Face cards have specific indices:
-          T(10) -> 10 (or 34 for Ts)
-          J -> 11
-          Q -> 12
-          K -> 13 (or 47 for Kd)
-          A -> 14 (or 48 for Ah)
-        
-        Args:
-            card (str): Two-character string representing a card (e.g., 'Ah')
-        
-        Returns:
-            int: Index in the one-hot encoding (0-51)
-        """
-        rank = card[0]
-        suit = card[1]
-        
-        # Handle special cases first
+        suit_offset = {'s': 0, 'h': 13, 'd': 26, 'c': 39}
+        if suit not in suit_offset:
+            raise ValueError(f"Invalid card suit: {suit}")
+            
         if rank == 'T':
-            base = 34 if suit == 's' else 10
+            rank_idx = 8  # 10 is at index 8
         elif rank == 'J':
-            base = 11
+            rank_idx = 9
         elif rank == 'Q':
-            base = 12
+            rank_idx = 10
         elif rank == 'K':
-            base = 47 if suit == 'd' else 13
+            rank_idx = 11
         elif rank == 'A':
-            base = 48 if suit == 'h' else 14
+            rank_idx = 12
         elif rank >= '2' and rank <= '9':
-            base = int(rank) + 1
+            rank_idx = int(rank) - 2
         else:
             raise ValueError(f"Invalid card rank: {rank}")
-        
-        return base
-
-    def predict(self, state):
-        """
-        Get Q-values for all actions in the given state.
-        
-        Args:
-            state (dict): Current poker state
             
-        Returns:
-            numpy.ndarray: Q-values for each possible action
-        """
-        processed_state = self.preprocess_state(state)
-        return self.model.predict(processed_state)
+        return suit_offset[suit] + rank_idx
+    
+    def predict(self, valid_actions, state):
+        """Get Q-values for valid actions in current state."""
+        hole_cards, community_cards, numeric_features = state
+        
+        # Decode and print cards
+        hole_card_str = [self._index_to_card(i) for i, val in enumerate(hole_cards[0]) if val == 1]
+        community_card_str = [self._index_to_card(i) for i, val in enumerate(community_cards[0]) if val == 1]
+        print(f"Hole cards: {hole_card_str}")
+        print(f"Community cards: {community_card_str}")
+
+        # Predict Q-values
+        q_values = self.model.predict([hole_cards, community_cards, numeric_features]).flatten()
+        
+        # Map and print Q-values for each action
+        valid_q_values = np.full(len(valid_actions), -np.inf)
+        print("\nAction Q-values:")
+        for i, action_info in enumerate(valid_actions):
+            action = action_info['action']
+            amount = action_info['amount']
+            if action == 'fold':
+                valid_q_values[i] = q_values[0]
+                print(f"FOLD: {q_values[0]:.3f}")
+            elif action == 'call':
+                valid_q_values[i] = q_values[1]
+                print(f"CALL ({amount}): {q_values[1]:.3f}")
+            elif action == 'raise':
+                raise_idx = np.clip(2 + (amount['min'] / amount['max']) * (self.action_size - 3), 2, self.action_size - 1).astype(int)
+                valid_q_values[i] = q_values[raise_idx]
+                print(f"RAISE ({amount['min']}-{amount['max']}): {q_values[raise_idx]:.3f}")
+                
+        return valid_q_values
 
     def update_weights(self, state, target_q_values, episode=None, action_taken=None, reward=None):
-        """
-        Update the network weights using backpropagation and track performance metrics.
-        
-        Args:
-            state (dict): Current poker state
-            target_q_values (numpy.ndarray): Target Q-values for training
-            episode (int, optional): Current training episode number
-            action_taken (int, optional): Action that was taken in this state
-            reward (float, optional): Reward received for the action
-            
-        Returns:
-            History: Training history object
-        """
-        processed_state = self.preprocess_state(state)
-        history = self.model.fit(processed_state, target_q_values, verbose=0)
-        
-        # Get current predictions for comparison
-        current_q_values = self.model.predict(processed_state)
-        
-        # Record performance metrics with consistent types
-        from datetime import datetime
-        import json
+        history = self.model.fit(
+            [state[0], state[1], state[2]], 
+            target_q_values,
+            verbose=0
+        )
+
+        current_q_values = self.model.predict([state[0], state[1], state[2]])
         
         self.training_history['timestamp'].append(datetime.now().isoformat())
         self.training_history['episode'].append(int(episode if episode is not None else len(self.training_history['episode'])))
@@ -283,20 +254,18 @@ class QNetworkModel:
         self.training_history['action_taken'].append(int(action_taken if action_taken is not None else -1))
         self.training_history['reward'].append(float(reward if reward is not None else 0.0))
         
-        # Record relevant state information
+        numeric_features = state[2][0]
         state_info = {
-            'hand': '_'.join(state['hole_cards']),
-            'position': state['position'],
-            'equity': state['equity'],
-            'pot': state['stack'] / state['pot'] if state['pot'] > 0 else 0  # pot odds
+            'hand': state[0].tolist(),
+            'position': int(numeric_features[2]),
+            'equity': float(numeric_features[4]),
+            'pot_odds': float(numeric_features[1] / numeric_features[0]) if numeric_features[0] > 0 else 0.0
         }
-        self.training_history['state_info'].append(json.dumps(state_info))
-        
-        # Record Q-value predictions
+        self.training_history['state_info'].append(state_info)
         self.training_history['q_values'].append(current_q_values.tolist())
-        
-        return history
 
+        return history
+    
     def save_performance_history(self, filename=None):
         """
         Save the model's performance history to a CSV file.
@@ -318,8 +287,8 @@ class QNetworkModel:
             'loss': self.training_history['loss'],
             'action_taken': self.training_history['action_taken'],
             'reward': self.training_history['reward'],
-            'state_info': self.training_history['state_info'],
-            'q_values': [str(q) for q in self.training_history['q_values']]
+            'state_info': [json.dumps(info) for info in self.training_history['state_info']],
+            'q_values': [str(q) for q in self.training_history['q_values']]  
         })
         
         # Generate filename if not provided
@@ -334,45 +303,54 @@ class QNetworkModel:
         return save_path
 
     def save_model(self, filename):
-        """
-        Save the model architecture, weights, and performance history.
-        
-        Args:
-            filename (str): Base name for the saved model files
-            
-        Returns:
-            tuple: Paths to saved model, weights files, and performance history
-        """
         save_dir = self.directories['saved_models'] / self.model_name
         save_dir.mkdir(parents=True, exist_ok=True)
         
-        model_path = save_dir / f"{filename}.keras"
-        weights_path = save_dir / f"{filename}.weights.h5"
+        # Save model architecture and compile it with same settings
+        model_config = self.model.get_config()
+        weights = self.model.get_weights()
         
-        try:
-            self.model.save(str(model_path))
-            self.model.save_weights(str(weights_path))
-            # Save performance history alongside model
-            history_path = self.save_performance_history(f"{filename}_history.csv")
-            return model_path, weights_path, history_path
-            
-        except Exception as e:
-            raise RuntimeError(f"Error saving model: {str(e)}")
+        # Recreate identical model and set weights
+        new_model = keras.Model.from_config(model_config)
+        new_model.set_weights(weights)
+        new_model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=0.001),
+            loss='mse'
+        )
+        
+        # Save complete model with weights and optimizer state
+        model_path = save_dir / f"{filename}.keras"
+        new_model.save(str(model_path))
+        
+        # Also save weights separately
+        weights_path = save_dir / f"{filename}.weights.h5"
+        new_model.save_weights(str(weights_path))
+        
+        # Save performance history
+        history_path = self.save_performance_history(f"{filename}_history.csv")
+        return model_path, weights_path, history_path
 
     def load_model(self, filename):
-        """
-        Load model weights from a file.
-        
-        Args:
-            filename (str): Name of the weights file to load
-            
-        Returns:
-            bool: True if loading was successful
-        """
-        weights_path = self.directories['saved_models'] / self.model_name / f"{filename}.weights.h5"
-        
         try:
-            self.model.load_weights(str(weights_path))
+            model_path = self.directories['saved_models'] / self.model_name / f"{filename}.keras"
+            if model_path.exists():
+                self.model = keras.models.load_model(str(model_path))
+            else:
+                # Fallback to weights-only loading
+                weights_path = self.directories['saved_models'] / self.model_name / f"{filename}.h5"
+                self.model.load_weights(str(weights_path))
+            
+            # Load training history
+            history_path = self.directories['saved_models'] / self.model_name / f"{filename}.csv"
+            if history_path.exists():
+                import pandas as pd
+                df = pd.read_csv(history_path)
+                for key in self.training_history:
+                    if key in df.columns:
+                        self.training_history[key] = df[key].tolist()
+            
             return True
+            
         except Exception as e:
-            raise FileNotFoundError(f"Error loading weights: {str(e)}")
+            warnings.warn(f"Error loading model: {str(e)}")
+            return False

@@ -1,2 +1,0 @@
-timestamp,episode,loss,action_taken,reward,state_info,q_values
-2025-01-20T11:28:14.955087,0,320.4911193847656,0,10.0,"{""hand"": ""Ah_Kh"", ""position"": 2, ""equity"": 0.75, ""pot"": 10.0}","[[4.999195575714111, -3.8265419006347656, 6.3383917808532715]]"
