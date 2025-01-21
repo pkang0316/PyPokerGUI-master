@@ -1,5 +1,6 @@
 import pypokergui.engine_wrapper as Engine
 import pypokergui.ai_generator as AG
+MAX_TRAINING_GAMES = 100  # Maximum number of times to restart the game
 
 class GameManager(object):
     def __init__(self):
@@ -11,7 +12,7 @@ class GameManager(object):
         self.latest_messages = []
         self.next_player_uuid = None
         self.round_count = 0
-        self.game_ended = False  # Track whether the game has ended
+        self.game_count = 0  # Track number of game reruns
 
     def define_rule(self, max_round, initial_stack, small_blind, ante, blind_structure):
         self.rule = Engine.gen_game_config(max_round, initial_stack, small_blind, ante, blind_structure)
@@ -45,9 +46,21 @@ class GameManager(object):
         self.next_player_uuid = fetch_next_player_uuid(self.latest_messages)
 
     def update_game(self, action, amount):
-        assert len(self.latest_messages) != 0  # check that start_game has already been called
         self.latest_messages = self.engine.update_game(action, amount)
         self.next_player_uuid = fetch_next_player_uuid(self.latest_messages)
+        
+        # Check if game ended
+        if has_game_finished(self.latest_messages):
+            result_msg = self.latest_messages[-1][1]['message']
+            # Notify AI players of game result
+            for uuid, player in self.ai_players.items():
+                player.receive_round_result_message(
+                    result_msg['winners'],
+                    result_msg['hand_info'],
+                    result_msg['round_state']
+                )
+            if hasattr(self, 'restart_game'):
+                self.restart_game()
 
     def ask_action_to_ai_player(self, uuid):
         assert uuid in self.ai_players
@@ -59,22 +72,35 @@ class GameManager(object):
                 ask_message['message']['hole_card'],
                 ask_message['message']['round_state']
         )
+    def restart_game(self):
+        """Auto-restarts game for continuous training."""
+        if hasattr(self, 'game_count'):
+            self.game_count += 1
+        else:
+            self.game_count = 1
+            
+        if self.game_count <= MAX_TRAINING_GAMES:
+            self.is_playing_poker = False
+            self.latest_messages = []
+            self.next_player_uuid = None
+            self.start_game()
+        else:
+            self.is_playing_poker = False
 
     def end_game(self):
-        """
-        Called when the game ends to finalize any last steps.
-        Save weights and reinitialize for the next round.
-        """
-        print("Game has ended. Saving model and reinitializing for the next round.")
-
-        # Save models for AI players before the game ends
+        """Handles game end and auto-restarts for continuous training."""
+        print(f"Game {self.rerun_count + 1} ended. Saving models...")
+        
         self.save_model_for_ai_players()
-
-        # Reinitialize the game for the next round
-        self.reinitialize_game()
-
-        # Start a new game automatically
-        self.start_game()
+        
+        if self.rerun_count < MAX_GAME_RERUNS:
+            print(f"Starting new game ({self.rerun_count + 1}/{MAX_GAME_RERUNS})")
+            self.rerun_count += 1
+            self.reinitialize_game()
+            self.start_game()
+        else:
+            print(f"Reached maximum game reruns ({MAX_GAME_RERUNS}). Training complete.")
+            self.is_playing_poker = False
 
     def save_model_for_ai_players(self):
         """
