@@ -1,4 +1,7 @@
 # PyPokerGUI
+Once you get dependencies set up, try running
+1. pypokergui serve C:\Users\User\Desktop\PyPokerGUI-master\poker_conf.yaml --port 8888 --speed fast
+2. python .\train_poker_bots.py
 
 [![Build Status](https://travis-ci.org/ishikota/PyPokerGUI.svg?branch=master)](https://travis-ci.org/ishikota/PyPokerGUI)
 [![PyPI](https://img.shields.io/pypi/v/PyPokerGUI.svg?maxAge=2592000)](https://badge.fury.io/py/PyPokerGUI)
