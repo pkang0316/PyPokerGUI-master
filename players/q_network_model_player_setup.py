@@ -18,14 +18,20 @@ class QLearningPokerPlayer(BasePokerPlayer):
     
     def declare_action(self, valid_actions, hole_card, round_state):
         state = self.preprocess_state(hole_card, round_state)
-        self.last_state = state  # Store for learning
+        self.last_state = state
         
         q_values = self.model.predict(valid_actions, state)
-        best_action_idx = np.argmax(q_values[:len(valid_actions)])
         
-        action = valid_actions[best_action_idx]['action']
-        amount = valid_actions[best_action_idx]['amount']
-        self.last_action = best_action_idx  # Store for learning
+        # Apply softmax to convert Q-values to probabilities
+        probabilities = np.exp(q_values[:len(valid_actions)]) / np.sum(np.exp(q_values[:len(valid_actions)]))
+        
+        # Sample action based on probabilities
+        action_idx = np.random.choice(len(valid_actions), p=probabilities)
+        
+        self.last_action = action_idx
+        action = valid_actions[action_idx]['action']
+        amount = valid_actions[action_idx]['amount']
+        
         if isinstance(amount, dict):
             amount = np.mean(list(amount.values()))
         return action, amount
@@ -33,11 +39,7 @@ class QLearningPokerPlayer(BasePokerPlayer):
     def receive_game_start_message(self, game_info):
         """Initialize model and UUID for new game."""
         self.model = QNetworkModel(6)
-        
-        # Only try to load if model exists
-        weights_path = Path("models/saved/q_network_model/q_network_model.weights.h5")
-        if weights_path.exists():
-            self.model.load_model(f'{self.player_name}.weights')
+        self.model.load_model(f'{self.player_name}.weights')
         
         # Get UUID from game info if available, otherwise generate one
         self.uuid = game_info.get('uuid', str(uuid.uuid4()))

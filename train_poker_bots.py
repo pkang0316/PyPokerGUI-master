@@ -3,7 +3,7 @@ from models.q_network_model import QNetworkModel
 from players.q_network_model_player_setup import QLearningPokerPlayer
 import numpy as np
 
-MAX_GAMES = 1000
+MAX_GAMES = 10
 
 def train_poker_bots():
     # Initialize two bots
@@ -16,9 +16,9 @@ def train_poker_bots():
     bot2.receive_game_start_message({'uuid': 'bot2'})
     # Game config
     config = Engine.gen_game_config(
-        max_round=10,
+        max_round=100,
         initial_stack=200,
-        small_blind=10,
+        small_blind=1,
         ante=0,
         blind_structure=None
     )
@@ -58,7 +58,8 @@ def train_poker_bots():
             
             # Update game state
             messages = engine.update_game(action, amount)
-            
+    bot1.model.save_model('bot1')
+    bot2.model.save_model('bot2')
     print("\nTraining complete!")
 
 if __name__ == "__main__":
